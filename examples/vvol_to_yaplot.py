@@ -15,6 +15,11 @@ import numpy as np
 from pathlib import Path
 
 try:
+    from tqdm.auto import tqdm
+except ImportError:
+    tqdm = None
+
+try:
     import matplotlib
 
     matplotlib.use("Agg")
@@ -119,9 +124,15 @@ def vvol_to_yaplot(
     indexer = VvolIndexer(vvol_path)
     nframes = len(indexer)
 
+    # tqdm が利用可能なら進捗バー付きイテレータを使う
+    if tqdm is not None:
+        frame_iter = tqdm(range(nframes), desc="vvol→yaplot", unit="frame")
+    else:
+        frame_iter = range(nframes)
+
     out = sys.stdout if str(output_path) == "-" else open(output_path, "w")
     try:
-        for frame_idx in range(nframes):
+        for frame_idx in frame_iter:
             data = indexer.get_frame_data(frame_idx)
             if data is None:
                 continue
