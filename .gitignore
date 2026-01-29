@@ -1,0 +1,12 @@
+*.lock
+__pycache__
+*.o
+.DS_Store
+dist/
+build/
+*.egg-info/
+.venv/
+.pytest_cache/
+easy_voro/voro_volumes
+*.mp4
+*.vvol
