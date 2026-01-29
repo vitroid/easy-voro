@@ -37,12 +37,13 @@ Unlike other wrappers that use complex bindings, `easy-voro` uses a clean JSON-b
 
    ```bash
    sudo apt update
-   sudo apt install build-essential libvoro++-dev
+   sudo apt install build-essential libvoro++1 libvoro++-dev
    ```
 
-   - `libvoro++-dev`: ヘッダとライブラリ（開発用）。実行のみなら `libvoro++1` でも可だが、本プロジェクトでは自前ビルドのため dev が必要。
+   - Ubuntu の voro++ ライブラリはパッケージ名 `libvoro++1`。開発用には `libvoro++-dev`（ヘッダとリンク用）も必要で、本プロジェクトの自前ビルドでは両方入れます。
 
 2. **Python 環境**
+
    ```bash
    sudo apt install python3 python3-pip
    pip install --user poetry

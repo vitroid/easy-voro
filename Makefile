@@ -7,7 +7,7 @@ ifeq ($(UNAME),Darwin)
   VORO_INC := $(VORO_ROOT)/include/voro++
   VORO_LIB := $(VORO_ROOT)/lib
 else
-  # Ubuntu/Debian: libvoro++-dev で /usr/include/voro++, ライブラリはシステム検索
+  # Ubuntu/Debian: libvoro++1 + libvoro++-dev で /usr/include/voro++, ライブラリはシステム検索
   VORO_INC := /usr/include/voro++
   VORO_LIB :=
 endif

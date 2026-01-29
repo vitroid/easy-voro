@@ -23,9 +23,9 @@ except ImportError:
     cm = None
 
 try:
-    from .animate_voronoi_volumes import VvolIndexer
+    from .vvol_indexer import VvolIndexer
 except ImportError:
-    from animate_voronoi_volumes import VvolIndexer
+    from vvol_indexer import VvolIndexer
 
 
 # パレットは 0〜2 を避け、3 番から使用（最大 255 まで。余裕をみて 3〜66 の 64 段階）
