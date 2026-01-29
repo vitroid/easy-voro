@@ -3,8 +3,9 @@
 .vvol を Yaplot 形式（.yap）に変換する。
 
 体積偏差（平均からのずれ）を animate_voronoi_volumes.py と同様に RdBu_r で彩色し、
-各サイトを円（c コマンド）で描画します。
+各サイトを円（Circle）で描画します。
 
+yaplotlib: https://vitroid.github.io/yaplotlib/yaplotlib.html
 Yaplot の仕様: https://github.com/vitroid/Yaplot
 - サイズ（r）やパレット（@）はそのフレーム内だけ有効で、空行でフレームが終わるとリセットされる。
 - パレット番号 0〜2 はシステム用（黒・灰・白）のため、本スクリプトでは 3 番以降を使用する。
@@ -26,6 +27,11 @@ try:
     import matplotlib.cm as cm
 except ImportError:
     cm = None
+
+try:
+    from yaplotlib import YaplotDocument
+except ImportError:
+    YaplotDocument = None
 
 try:
     from .vvol_indexer import VvolIndexer
@@ -65,35 +71,27 @@ def dev_to_palette_index(dev, vmin, vmax, ncolors):
     return min(idx, ncolors - 1)
 
 
-def frame_to_yaplot_lines(data, radius, palette_rgb, palette_start, ncolors):
+def add_frame_to_doc(doc, data, radius, palette_rgb, palette_start, ncolors):
     """
-    1 フレーム分のデータを Yaplot コマンド行のリストで返す。
+    1 フレーム分のデータを doc の現在フレームに追加する。
     彩色は animate_voronoi_volumes.py と同様: 平均体積に対する±5%の範囲でグラデーション。
     """
     pos = data["pos"]
     dev = data["dev"]
     mean_v = data["mean_v"]
-    # 平均体積に対する%偏差に変換
     dev_pct = dev / mean_v * 100.0
-    # 平均体積に対する±5%の範囲でグラデーション
     vmin, vmax = -5.0, 5.0
 
-    # 円の半径（フレームごとに指定が必要）
-    lines = [f"r {radius}"]
-    # パレット定義（フレームごとにリセットされるため毎回出力）
-    lines += [
-        f"@ {palette_start + i} {palette_rgb[i][0]} {palette_rgb[i][1]} {palette_rgb[i][2]}"
-        for i in range(ncolors)
-    ]
-    # 各サイトを円で描画
+    frame = doc.current
+    frame.Size(radius)
+    for i in range(ncolors):
+        r, g, b = palette_rgb[i]
+        frame.SetPalette(palette_start + i, r, g, b, maxval=255.0)
+
     for j in range(len(pos)):
         idx = dev_to_palette_index(dev_pct[j], vmin, vmax, ncolors)
-        lines.append(f"@ {palette_start + idx}")
-        x, y, z = pos[j, 0], pos[j, 1], pos[j, 2]
-        lines.append(f"c {x} {y} {z}")
-    # 空行でフレーム終端
-    lines.append("")
-    return lines
+        frame.Color(palette_start + idx)
+        frame.Circle(pos[j].tolist())
 
 
 def vvol_to_yaplot(
@@ -115,6 +113,9 @@ def vvol_to_yaplot(
     palette_start : int
         使用開始パレット番号（0〜2 は避けるためデフォルト 3）
     """
+    if YaplotDocument is None:
+        raise RuntimeError("yaplotlib が必要です: pip install yaplotlib")
+
     if palette_start < 3 or palette_start + ncolors > 256:
         raise ValueError(
             "パレットは 3〜255 の範囲で指定してください（0〜2 はシステム予約）"
@@ -124,28 +125,30 @@ def vvol_to_yaplot(
     indexer = VvolIndexer(vvol_path)
     nframes = len(indexer)
 
-    # tqdm が利用可能なら進捗バー付きイテレータを使う
     if tqdm is not None:
         frame_iter = tqdm(range(nframes), desc="vvol→yaplot", unit="frame")
     else:
         frame_iter = range(nframes)
 
-    out = sys.stdout if str(output_path) == "-" else open(output_path, "w")
-    try:
-        for frame_idx in frame_iter:
-            data = indexer.get_frame_data(frame_idx)
-            if data is None:
-                continue
-            for line in frame_to_yaplot_lines(
-                data, radius, palette_rgb, palette_start, ncolors
-            ):
-                out.write(line + "\n")
-    finally:
-        if out is not sys.stdout:
-            out.close()
+    doc = YaplotDocument()
+    first_frame = True
+    written_count = 0
+    for frame_idx in frame_iter:
+        data = indexer.get_frame_data(frame_idx)
+        if data is None:
+            continue
+        if not first_frame:
+            doc.new_frame()
+        first_frame = False
+        add_frame_to_doc(doc, data, radius, palette_rgb, palette_start, ncolors)
+        written_count += 1
 
-    if nframes and out is not sys.stdout:
-        print(f"Wrote {nframes} frames to {output_path}", file=sys.stderr)
+    if str(output_path) == "-":
+        sys.stdout.write(doc.dumps())
+    else:
+        doc.save(output_path)
+        if written_count:
+            print(f"Wrote {written_count} frames to {output_path}", file=sys.stderr)
 
 
 def main():
