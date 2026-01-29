@@ -8,7 +8,7 @@ Unlike other wrappers that use complex bindings, `easy-voro` uses a clean JSON-b
 
 - `easy_voro/`: Python ラッパー。ビルド後は `easy_voro/voro_volumes` がここにできる。
 - `src/`: C++ ソース（voro++ 呼び出し）。
-- `examples/`: GROMACS 用ユーティリティ（`gromacs_to_voronoi.py`, `gromacs_to_vvol.py` は macOS/Ubuntu 共通。`animate_voronoi_volumes.py` は macOS のみ想定）。
+- `examples/`: GROMACS 用ユーティリティ（`gromacs_to_voronoi.py`, `gromacs_to_vvol.py`, `vvol_to_yaplot.py` は macOS/Ubuntu 共通。`animate_voronoi_volumes.py` は macOS のみ想定）。
 - `Makefile`: C++ ラッパーのビルド（macOS / Linux 対応）。
 
 ## Features
@@ -34,10 +34,12 @@ Unlike other wrappers that use complex bindings, `easy-voro` uses a clean JSON-b
 ### Ubuntu Linux（gromacs_to_vvol.py まで利用する場合）
 
 1. **C++ コンパイラと voro++**
+
    ```bash
    sudo apt update
    sudo apt install build-essential libvoro++-dev
    ```
+
    - `libvoro++-dev`: ヘッダとライブラリ（開発用）。実行のみなら `libvoro++1` でも可だが、本プロジェクトでは自前ビルドのため dev が必要。
 
 2. **Python 環境**
@@ -46,6 +48,7 @@ Unlike other wrappers that use complex bindings, `easy-voro` uses a clean JSON-b
    pip install --user poetry
    # または: pipx install poetry
    ```
+
    - Python 3.10 以上を推奨。必要なら `deadsnakes` PPA で 3.10 を入れる。
 
 ## Quick Start
@@ -95,7 +98,15 @@ poetry run python examples/gromacs_to_voronoi.py < system.gro
 
 # .gro を .vvol に変換（可視化用に事前計算しておく）
 poetry run python examples/gromacs_to_vvol.py system.gro output.vvol
+
+# .vvol を Yaplot 形式（.yap）に変換（体積偏差を RdBu_r で彩色）
+poetry run python examples/vvol_to_yaplot.py output.vvol scene.yap
 ```
+
+**Yaplot 形式について**（[Yaplot](https://github.com/vitroid/Yaplot) で再生）:
+
+- サイズ（`r`）やパレット（`@`）などの状態は **そのフレーム内だけ有効** で、空行でフレームが終わるとリセットされます。
+- パレット番号は通常 0〜255 で、**0〜2 はシステム用（黒・灰・白）** のため、書き換えないほうが無難です。本ツールは 3 番以降を使用します。
 
 **macOS のみ（可視化）:**
 

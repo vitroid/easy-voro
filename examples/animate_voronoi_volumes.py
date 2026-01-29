@@ -21,102 +21,123 @@ except ImportError:
 warnings.filterwarnings("ignore", category=UserWarning)
 
 
+# バイナリで "# FRAME" を探す用（デコードしないので高速）
+_MARKER = b"# FRAME"
+_NEWLINE_MARKER = b"\n# FRAME"
+
+
 class VvolIndexer:
-    """`.vvol`ファイルからVoronoi計算結果を読み込むクラス（高速アクセス用）"""
-    
+    """`.vvol`からVoronoi結果を読む。インデックスは初回アクセス時にバイナリスキャンで一括取得。"""
+
     def __init__(self, filename):
         self.filename = filename
-        self.frames = []
-        self._load_frames()
-    
-    def _load_frames(self):
-        """`.vvol`ファイルを読み込んで全フレームをメモリに保持（CSV形式）"""
-        print(f".vvolファイルを読み込み中: {self.filename}", file=sys.stderr)
+        self._offsets = None  # 初回アクセス時にのみ構築
+
+    def _ensure_index(self):
+        if self._offsets is not None:
+            return
+        self._offsets = []
+        path = Path(self.filename)
+        file_size = path.stat().st_size
+        buf_size = 4 * 1024 * 1024  # 4MB
+        overlap = 32  # 境界で "# FRAME" が分割されないように
+        step = buf_size - overlap
+        with open(self.filename, "rb") as f:
+            chunk_start = 0
+            while chunk_start < file_size:
+                f.seek(chunk_start)
+                buf = f.read(buf_size)
+                if not buf:
+                    break
+                # 先頭フレーム: ファイル先頭が "# FRAME"
+                if (
+                    chunk_start == 0
+                    and buf.startswith(_MARKER)
+                    and (
+                        len(buf) <= len(_MARKER)
+                        or buf[len(_MARKER) : len(_MARKER) + 1] in b" \t\n"
+                    )
+                ):
+                    self._offsets.append(0)
+                # 検索開始位置（重複を避ける）
+                search_from = 0 if chunk_start == 0 else overlap
+                pos = 0
+                while True:
+                    idx = buf.find(_NEWLINE_MARKER, search_from + pos)
+                    if idx == -1:
+                        break
+                    self._offsets.append(chunk_start + idx + 1)  # +\n の次
+                    pos = idx + 1
+                chunk_start += step
+        print(
+            f".vvol: {len(self._offsets)} フレーム（インデックス済）", file=sys.stderr
+        )
+
+    @property
+    def offsets(self):
+        self._ensure_index()
+        return self._offsets
+
+    def get_frame_data(self, frame_idx):
+        """指定フレームの先頭にseekしてそのフレームだけ読み、処理済みデータを返す"""
+        self._ensure_index()
+        if frame_idx < 0 or frame_idx >= len(self._offsets):
+            return None
+
+        current_frame = None
+        current_box = None
+        current_centers = []
+        current_volumes = []
+
         with open(self.filename, "r") as f:
-            current_frame = None
-            current_box = None
-            current_centers = []
-            current_volumes = []
-            
+            f.seek(self.offsets[frame_idx])
             for line in f:
                 line = line.strip()
                 if not line:
-                    # 空行はフレーム区切り
-                    if current_frame is not None:
-                        self.frames.append({
-                            "frame": current_frame,
-                            "box": current_box,
-                            "centers": current_centers,
-                            "volumes": current_volumes,
-                        })
-                    current_frame = None
-                    current_box = None
-                    current_centers = []
-                    current_volumes = []
-                    continue
-                
+                    # 空行でフレーム終端
+                    break
                 if line.startswith("# FRAME"):
-                    # フレームヘッダー: # FRAME <frame_idx> [n_cells]
                     parts = line.split()
                     if len(parts) >= 3:
                         current_frame = int(parts[2])
                 elif line.startswith("BOX"):
-                    # ボックス行: BOX <Lx> <Ly> <Lz>
                     parts = line.split()
                     if len(parts) >= 4:
                         Lx, Ly, Lz = float(parts[1]), float(parts[2]), float(parts[3])
                         current_box = np.diag([Lx, Ly, Lz])
                 else:
-                    # セル行: <x> <y> <z> <volume>
                     parts = line.split()
                     if len(parts) >= 4:
-                        x, y, z, volume = float(parts[0]), float(parts[1]), float(parts[2]), float(parts[3])
+                        x, y, z, volume = (
+                            float(parts[0]),
+                            float(parts[1]),
+                            float(parts[2]),
+                            float(parts[3]),
+                        )
                         current_centers.append([x, y, z])
                         current_volumes.append(volume)
-            
-            # 最後のフレームを保存
-            if current_frame is not None:
-                self.frames.append({
-                    "frame": current_frame,
-                    "box": current_box,
-                    "centers": current_centers,
-                    "volumes": current_volumes,
-                })
-        
-        print(f"読み込み完了: {len(self.frames)} フレーム", file=sys.stderr)
-    
-    def get_frame_data(self, frame_idx):
-        """指定されたフレームの処理済みデータを取得"""
-        if frame_idx < 0 or frame_idx >= len(self.frames):
+
+        if current_box is None or not current_centers:
             return None
-        
-        frame_data = self.frames[frame_idx]
-        
-        if frame_data["box"] is None or len(frame_data["centers"]) == 0:
-            return None
-        
-        # ボックス
-        box = frame_data["box"]
-        
-        # 中心座標と体積をnumpy配列に変換
-        positions = np.array(frame_data["centers"], dtype=np.float64)
-        volumes = np.array(frame_data["volumes"], dtype=np.float64)
+
+        positions = np.array(current_centers, dtype=np.float64)
+        volumes = np.array(current_volumes, dtype=np.float64)
         devs = volumes - np.mean(volumes)
-        
+
         return {
             "pos": positions,
             "dev": devs,
             "mean_v": np.mean(volumes),
-            "box": box,
+            "box": current_box,
         }
-    
+
     def __len__(self):
-        return len(self.frames)
+        return len(self.offsets)
 
 
 class GroIndexer:
     """Gromacsファイルからフレームを読み込むクラス（従来の実装）"""
-    
+
     def __init__(self, filename):
         self.filename = filename
         self.offsets = []
@@ -179,14 +200,14 @@ def create_animation_interactive(indexer, atom_type="C1", use_vvol=False):
     def get_processed_frame(idx):
         if idx in cache:
             return cache[idx]
-        
+
         # `.vvol`ファイルを使用する場合
         if use_vvol and isinstance(indexer, VvolIndexer):
             data = indexer.get_frame_data(idx)
             if data is not None:
                 cache[idx] = data
             return data
-        
+
         # 従来の方法（Gromacsファイルから直接計算）
         frame = indexer.get_frame(idx)
         if frame is None:
@@ -217,8 +238,8 @@ def create_animation_interactive(indexer, atom_type="C1", use_vvol=False):
     def update_scale(idx):
         d = get_processed_frame(idx)
         if d is not None and d["dev"].size > 0:
-            std = max(np.std(d["dev"]) * 0.3, 1e-6)
-            state["vmin"], state["vmax"] = -std, std
+            # 平均体積に対する±5%の範囲でグラデーション
+            state["vmin"], state["vmax"] = -5.0, 5.0
 
     def show_frame(idx):
         idx = int(max(0, min(idx, len(indexer) - 1)))
@@ -240,7 +261,9 @@ def create_animation_interactive(indexer, atom_type="C1", use_vvol=False):
             plotter.add_text(f"Frame {idx+1}: Error", color="red")
         else:
             pc = pv.PolyData(data["pos"])
-            pc["d"] = data["dev"]
+            # 平均体積に対する%偏差に変換
+            dev_pct = data["dev"] / data["mean_v"] * 100.0
+            pc["d"] = dev_pct
             glyph = pc.glyph(geom=pv.Sphere(radius=0.07), orient=False, scale=False)
             plotter.add_mesh(
                 glyph, scalars="d", cmap="RdBu_r", clim=[state["vmin"], state["vmax"]]
@@ -303,15 +326,16 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("input_file", help="入力ファイル (.gro または .vvol)")
     p.add_argument("--interactive", action="store_true")
-    p.add_argument("--atom-type", default="C1", help="原子タイプ（.groファイル使用時のみ）")
+    p.add_argument(
+        "--atom-type", default="C1", help="原子タイプ（.groファイル使用時のみ）"
+    )
     args = p.parse_args()
 
     if args.interactive:
         input_path = Path(args.input_file)
-        
-        # `.vvol`ファイルの場合はVvolIndexerを使用
+
+        # `.vvol`ファイルの場合はVvolIndexerを使用（prescan + seek）
         if input_path.suffix == ".vvol":
-            print(f".vvolファイルを読み込み中: {args.input_file}", file=sys.stderr)
             indexer = VvolIndexer(args.input_file)
             create_animation_interactive(indexer, args.atom_type, use_vvol=True)
         else:
